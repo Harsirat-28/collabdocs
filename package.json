@@ -1,0 +1,17 @@
+{
+  "name": "collabdocs",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build:server": "npm run build -w server",
+    "build:client": "npm run build -w client",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
+    "test:server": "npm run test -w server"
+  }
+}

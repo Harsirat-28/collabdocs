@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# build output
+dist/
+build/
+
+# uploads (local dev image storage)
+server/uploads/
+
+# prisma
+server/prisma/dev.db
+
+# logs
+npm-debug.log*
+*.log
+
+# editor/OS
+.DS_Store
+.vscode/
+.idea/
+
+# vite
+client/.vite/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# local Claude Code tool settings
+.claude/settings.local.json

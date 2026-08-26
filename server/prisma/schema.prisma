@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  documents       Document[]
+  refreshTokens   RefreshToken[]
+  documentAccess  DocumentAccess[]
+}
+
+model Document {
+  id           String   @id @default(uuid())
+  title        String   @default("Untitled document")
+  // Tiptap/ProseMirror JSON document, not HTML.
+  content      Json     @default("{}")
+  // Incremented on every successful content update; used to reject stale autosave writes.
+  version      Int      @default(1)
+  ownerId      String
+  owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  lastEditedBy String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accessGrants DocumentAccess[]
+
+  @@index([ownerId])
+}
+
+enum DocumentRole {
+  VIEWER
+  EDITOR
+}
+
+// A non-owner grant of read (VIEWER) or read+write (EDITOR) access to a
+// document. The owner is never a row here - ownership is Document.ownerId,
+// which already carries full access implicitly.
+model DocumentAccess {
+  id         String       @id @default(uuid())
+  documentId String
+  document   Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       DocumentRole
+  createdAt  DateTime     @default(now())
+
+  @@unique([documentId, userId])
+  @@index([userId])
+}
+
+// Supports refresh-token rotation with reuse detection: each issued refresh
+// token is recorded by its hash; on use it is revoked and linked to its
+// replacement, so a reused (stolen) token is detectable.
+model RefreshToken {
+  id                  String    @id @default(uuid())
+  userId              String
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash           String    @unique
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  replacedByTokenHash String?
+  createdAt           DateTime  @default(now())
+
+  @@index([userId])
+}
