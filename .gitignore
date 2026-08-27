@@ -34,3 +34,6 @@ client/.vite/
 
 # local Claude Code tool settings
 .claude/settings.local.json
+
+# project spec for AI-assisted development - kept locally, not published
+CLAUDE.md
