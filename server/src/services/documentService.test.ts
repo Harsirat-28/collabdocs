@@ -201,13 +201,22 @@ describe("optimistic concurrency on content updates", () => {
 
 describe("M3: realtime collaboration support", () => {
   describe("getDocumentForRealtime", () => {
-    it("resolves canWrite=true for the owner, and returns the document row", async () => {
-      const doc = await documentService.createDocument(OWNER, "Doc");
+    it("resolves canWrite=true for the owner, returns the document row, and the owner's own presence info", async () => {
+      const owner = await createFakeUser("realtime-owner-self@example.com");
+      const doc = await documentService.createDocument(owner.id, "Doc");
 
-      const result = await documentService.getDocumentForRealtime(doc.id, OWNER);
+      const result = await documentService.getDocumentForRealtime(doc.id, owner.id);
 
       expect(result.canWrite).toBe(true);
       expect(result.document.id).toBe(doc.id);
+      // fakePrisma's user.findUnique doesn't trim fields by `select` the way
+      // real Prisma does, so assert on the fields documentService actually
+      // relies on rather than exact equality.
+      expect(result.user).toMatchObject({
+        id: owner.id,
+        name: null,
+        email: "realtime-owner-self@example.com",
+      });
     });
 
     it("resolves canWrite=false for a VIEWER grant", async () => {

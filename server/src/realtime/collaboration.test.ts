@@ -22,9 +22,19 @@ import {
   type ClientToServerEvents,
   type ServerToClientEvents,
   type SocketData,
+  type PresenceUser,
 } from "./collaboration.js";
 
 const fakePrisma = prisma as unknown as FakePrisma;
+
+/**
+ * A socket that actually joins a room now needs a real User row behind its
+ * JWT subject (getDocumentForRealtime looks it up for the presence
+ * roster) - this creates one, mirroring documentService.test.ts's helper.
+ */
+async function createFakeUser(email: string) {
+  return fakePrisma.user.create({ data: { email, passwordHash: "unused", name: null } });
+}
 
 let httpServer: HttpServer;
 let io: SocketIOServer<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
@@ -104,8 +114,9 @@ describe("socket handshake auth", () => {
 
 describe("joining a document room", () => {
   it("seeds a new room from the document's existing content and syncs it to the joiner", async () => {
-    const doc = await documentService.createDocument("owner-1", "Doc");
-    const socket = connect(signAccessToken("owner-1"));
+    const owner = await createFakeUser("realtime-seed-owner@example.com");
+    const doc = await documentService.createDocument(owner.id, "Doc");
+    const socket = connect(signAccessToken(owner.id));
     await waitForConnect(socket);
 
     const { state } = await joinAndSync(socket, doc.id);
@@ -141,13 +152,13 @@ describe("joining a document room", () => {
 
 describe("relaying and authorizing updates", () => {
   async function makeShared(role: "VIEWER" | "EDITOR") {
-    const owner = "owner-3";
+    const owner = await createFakeUser(`collab-owner-${role}@example.com`);
     const email = `collab-${role}@example.com`;
     await fakePrisma.user.create({ data: { email, passwordHash: "x", name: null } });
     const collaborator = await fakePrisma.user.findUnique({ where: { email } });
-    const doc = await documentService.createDocument(owner, "Doc");
-    await documentService.shareDocument(doc.id, owner, email, role);
-    return { doc, ownerId: owner, collaboratorId: collaborator!.id };
+    const doc = await documentService.createDocument(owner.id, "Doc");
+    await documentService.shareDocument(doc.id, owner.id, email, role);
+    return { doc, ownerId: owner.id, collaboratorId: collaborator!.id };
   }
 
   it("relays an EDITOR's update to other room members but not back to the sender", async () => {
@@ -200,8 +211,9 @@ describe("relaying and authorizing updates", () => {
 
 describe("persistence", () => {
   it("flushes accumulated updates to yjsState and a re-derived content snapshot", async () => {
-    const doc = await documentService.createDocument("owner-4", "Doc");
-    const socket = connect(signAccessToken("owner-4"));
+    const owner = await createFakeUser("realtime-flush-owner@example.com");
+    const doc = await documentService.createDocument(owner.id, "Doc");
+    const socket = connect(signAccessToken(owner.id));
     await waitForConnect(socket);
     await joinAndSync(socket, doc.id);
 
@@ -211,11 +223,11 @@ describe("persistence", () => {
 
     await __flushRoomForTesting(doc.id);
 
-    const stored = await documentService.getDocument(doc.id, "owner-4");
+    const stored = await documentService.getDocument(doc.id, owner.id);
     expect(stored.yjsState).toBeInstanceOf(Buffer);
     expect((stored.yjsState as Buffer).length).toBeGreaterThan(0);
     expect(JSON.stringify(stored.content)).toContain("hello from a real edit");
-    expect(stored.lastEditedBy).toBe("owner-4");
+    expect(stored.lastEditedBy).toBe(owner.id);
   });
 });
 
@@ -251,12 +263,100 @@ describe("reconnection resync", () => {
   });
 
   async function makeSharedEditor() {
-    const owner = "owner-5";
+    const owner = await createFakeUser("realtime-reconnect-owner@example.com");
     const email = "editor5@example.com";
     await fakePrisma.user.create({ data: { email, passwordHash: "x", name: null } });
     const collaborator = await fakePrisma.user.findUnique({ where: { email } });
-    const doc = await documentService.createDocument(owner, "Doc");
-    await documentService.shareDocument(doc.id, owner, email, "EDITOR");
-    return { doc, ownerId: owner, collaboratorId: collaborator!.id };
+    const doc = await documentService.createDocument(owner.id, "Doc");
+    await documentService.shareDocument(doc.id, owner.id, email, "EDITOR");
+    return { doc, ownerId: owner.id, collaboratorId: collaborator!.id };
+  }
+});
+
+describe("active-users presence roster (M4)", () => {
+  it("broadcasts the roster on join, and an updated roster to remaining members on leave", async () => {
+    const owner = await createFakeUser("presence-owner@example.com");
+    const editorEmail = "presence-editor@example.com";
+    await fakePrisma.user.create({ data: { email: editorEmail, passwordHash: "x", name: "Editor Name" } });
+    const editor = await fakePrisma.user.findUnique({ where: { email: editorEmail } });
+    const doc = await documentService.createDocument(owner.id, "Doc");
+    await documentService.shareDocument(doc.id, owner.id, editorEmail, "EDITOR");
+
+    const ownerSocket = connect(signAccessToken(owner.id));
+    await waitForConnect(ownerSocket);
+    const soloRoster = waitFor<{ users: PresenceUser[] }>(ownerSocket, "document:presence");
+    ownerSocket.emit("document:join", { documentId: doc.id });
+    expect((await soloRoster).users.map((u) => u.userId)).toEqual([owner.id]);
+
+    const editorSocket = connect(signAccessToken(editor!.id));
+    await waitForConnect(editorSocket);
+    const bothRoster = waitFor<{ users: PresenceUser[] }>(ownerSocket, "document:presence");
+    await joinAndSync(editorSocket, doc.id);
+    const rosterAfterJoin = (await bothRoster).users;
+    expect(rosterAfterJoin.map((u) => u.userId).sort()).toEqual([editor!.id, owner.id].sort());
+    expect(rosterAfterJoin.find((u) => u.userId === editor!.id)).toEqual({
+      userId: editor!.id,
+      name: "Editor Name",
+      email: editorEmail,
+    });
+
+    const rosterAfterLeave = waitFor<{ users: PresenceUser[] }>(ownerSocket, "document:presence");
+    editorSocket.disconnect();
+    expect((await rosterAfterLeave).users.map((u) => u.userId)).toEqual([owner.id]);
+  });
+});
+
+describe("cursor/selection awareness relay (M4)", () => {
+  it("relays a VIEWER's awareness update to other room members, even though they cannot edit", async () => {
+    const { doc, ownerId, collaboratorId } = await makeSharedViewer();
+
+    const ownerSocket = connect(signAccessToken(ownerId));
+    const viewerSocket = connect(signAccessToken(collaboratorId));
+    await waitForConnect(ownerSocket);
+    await waitForConnect(viewerSocket);
+    await joinAndSync(ownerSocket, doc.id);
+    await joinAndSync(viewerSocket, doc.id);
+
+    const cursorUpdate = new Uint8Array([1, 2, 3]);
+    const received = waitFor<{ update: Uint8Array }>(ownerSocket, "document:awareness");
+    let echoedBackToSender = false;
+    viewerSocket.once("document:awareness", () => {
+      echoedBackToSender = true;
+    });
+
+    viewerSocket.emit("document:awareness", { documentId: doc.id, update: cursorUpdate });
+    expect(new Uint8Array((await received).update)).toEqual(cursorUpdate);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(echoedBackToSender).toBe(false);
+  });
+
+  it("replays an already-joined member's last awareness update to a new joiner", async () => {
+    const { doc, ownerId, collaboratorId } = await makeSharedViewer();
+
+    const ownerSocket = connect(signAccessToken(ownerId));
+    await waitForConnect(ownerSocket);
+    await joinAndSync(ownerSocket, doc.id);
+
+    const cursorUpdate = new Uint8Array([9, 9, 9]);
+    ownerSocket.emit("document:awareness", { documentId: doc.id, update: cursorUpdate });
+    await new Promise((resolve) => setTimeout(resolve, 20)); // let the server record it
+
+    const viewerSocket = connect(signAccessToken(collaboratorId));
+    await waitForConnect(viewerSocket);
+    const replayed = waitFor<{ update: Uint8Array }>(viewerSocket, "document:awareness");
+    viewerSocket.emit("document:join", { documentId: doc.id });
+
+    expect(new Uint8Array((await replayed).update)).toEqual(cursorUpdate);
+  });
+
+  async function makeSharedViewer() {
+    const owner = await createFakeUser("awareness-owner@example.com");
+    const email = "awareness-viewer@example.com";
+    await fakePrisma.user.create({ data: { email, passwordHash: "x", name: null } });
+    const collaborator = await fakePrisma.user.findUnique({ where: { email } });
+    const doc = await documentService.createDocument(owner.id, "Doc");
+    await documentService.shareDocument(doc.id, owner.id, email, "VIEWER");
+    return { doc, ownerId: owner.id, collaboratorId: collaborator!.id };
   }
 });

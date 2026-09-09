@@ -112,11 +112,14 @@ export function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-gray-200 bg-white px-6 py-4">
         <h1 className="text-lg font-semibold text-gray-900">CollabDocs</h1>
-        <div className="flex items-center gap-4 text-sm text-gray-600">
-          <span>{user?.email}</span>
-          <button onClick={() => void handleLogout()} className="text-gray-500 hover:text-gray-900">
+        <div className="flex min-w-0 items-center gap-4 text-sm text-gray-600">
+          <span className="min-w-0 truncate">{user?.email}</span>
+          <button
+            onClick={() => void handleLogout()}
+            className="flex-shrink-0 rounded text-gray-500 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+          >
             Log out
           </button>
         </div>
@@ -137,7 +140,9 @@ export function DashboardPage() {
         <div className="rounded-lg border border-gray-200 bg-white">
           {isLoading && <p className="px-4 py-6 text-sm text-gray-500">Loading documents...</p>}
           {isError && (
-            <p className="px-4 py-6 text-sm text-red-600">Failed to load documents.</p>
+            <p role="alert" className="px-4 py-6 text-sm text-red-600">
+              Failed to load documents.
+            </p>
           )}
           {documents && documents.length === 0 && (
             <p className="px-4 py-6 text-sm text-gray-500">

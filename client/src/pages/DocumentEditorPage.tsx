@@ -7,14 +7,17 @@ import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import Collaboration from "@tiptap/extension-collaboration";
+import CollaborationCursor from "@tiptap/extension-collaboration-cursor";
 import { useDocument, useRenameDocument } from "../features/documents/hooks";
 import type { DocumentDetail } from "../features/documents/api";
-import { useCollaborationDoc, YJS_FIELD } from "../features/realtime/useCollaborationDoc";
+import { colorForUser, useCollaborationDoc, YJS_FIELD } from "../features/realtime/useCollaborationDoc";
 import { uploadImage } from "../features/uploads/api";
 import { EditorToolbar } from "../features/editor/EditorToolbar";
 import { SaveStatusIndicator } from "../components/SaveStatusIndicator";
+import { ActiveUsersList } from "../components/ActiveUsersList";
 import { SharePanel } from "../features/documents/SharePanel";
 import { extractErrorMessage } from "../lib/apiClient";
+import { useAuthStore } from "../store/authStore";
 
 function EditorView({ document }: { document: DocumentDetail }) {
   const navigate = useNavigate();
@@ -28,7 +31,8 @@ function EditorView({ document }: { document: DocumentDetail }) {
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { ydoc, status } = useCollaborationDoc(document.id);
+  const currentUser = useAuthStore((state) => state.user);
+  const { ydoc, awareness, status, presence } = useCollaborationDoc(document.id);
 
   const editor = useEditor({
     extensions: [
@@ -38,6 +42,13 @@ function EditorView({ document }: { document: DocumentDetail }) {
       Image,
       Placeholder.configure({ placeholder: "Start writing..." }),
       Collaboration.configure({ document: ydoc, field: YJS_FIELD }),
+      CollaborationCursor.configure({
+        provider: { awareness },
+        user: {
+          name: currentUser?.name || currentUser?.email || "Anonymous",
+          color: colorForUser(currentUser?.id ?? ""),
+        },
+      }),
     ],
     editable: canEdit,
   });
@@ -71,31 +82,36 @@ function EditorView({ document }: { document: DocumentDetail }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="border-b border-gray-200 bg-white px-6 py-3">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
+        <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 items-center gap-3">
             <button
               onClick={() => navigate("/")}
-              className="flex-shrink-0 text-sm text-gray-500 hover:text-gray-900"
+              className="flex-shrink-0 rounded text-sm text-gray-500 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
             >
               &larr; Dashboard
             </button>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onBlur={commitTitle}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-              }}
-              disabled={!canEdit}
-              className="min-w-0 flex-1 truncate rounded px-2 py-1 text-lg font-medium text-gray-900 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none disabled:hover:bg-transparent"
-            />
+            <label className="min-w-0 flex-1">
+              <span className="sr-only">Document title</span>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+                disabled={!canEdit}
+                className="w-full truncate rounded px-2 py-1 text-lg font-medium text-gray-900 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:hover:bg-transparent"
+              />
+            </label>
           </div>
           <div className="flex flex-shrink-0 items-center gap-4">
+            <ActiveUsersList users={presence} />
             <SaveStatusIndicator status={status} />
             {isOwner && (
               <button
                 onClick={() => setSharePanelOpen((open) => !open)}
-                className="text-sm text-gray-500 hover:text-gray-900"
+                aria-expanded={sharePanelOpen}
+                className="rounded text-sm text-gray-500 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
               >
                 Share
               </button>
@@ -107,7 +123,10 @@ function EditorView({ document }: { document: DocumentDetail }) {
       {isOwner && sharePanelOpen && <SharePanel documentId={document.id} />}
 
       {imageError && (
-        <div className="border-b border-red-200 bg-red-50 px-6 py-2 text-center text-sm text-red-700">
+        <div
+          role="alert"
+          className="border-b border-red-200 bg-red-50 px-6 py-2 text-center text-sm text-red-700"
+        >
           {imageError}
         </div>
       )}

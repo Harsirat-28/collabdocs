@@ -48,7 +48,11 @@ export function SharePanel({ documentId }: { documentId: string }) {
       <div className="mx-auto max-w-3xl">
         <h2 className="mb-2 text-sm font-medium text-gray-900">Share this document</h2>
 
-        {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+        {error && (
+          <p role="alert" className="mb-2 text-sm text-red-600">
+            {error}
+          </p>
+        )}
 
         <form onSubmit={(e) => void handleShare(e)} className="mb-3 flex items-center gap-2">
           <input
@@ -57,7 +61,7 @@ export function SharePanel({ documentId }: { documentId: string }) {
             placeholder="Email address"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none"
+            className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           />
           <select
             value={role}

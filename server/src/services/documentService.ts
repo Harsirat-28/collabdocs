@@ -155,7 +155,8 @@ export async function updateDocumentContent(
 }
 
 /**
- * Authorization + seed data for a Socket.io room join (M3). Reuses the same
+ * Authorization + seed data for a Socket.io room join (M3), plus the
+ * joiner's own display info for the M4 presence roster. Reuses the same
  * read-access check as the REST GET, and derives write permission from the
  * resolved role - same OWNER/EDITOR-can-write, VIEWER-cannot rule as the
  * REST content endpoint, just checked once at join time rather than per
@@ -163,7 +164,13 @@ export async function updateDocumentContent(
  */
 export async function getDocumentForRealtime(documentId: string, userId: string) {
   const { document, role } = await loadDocumentForRead(documentId, userId);
-  return { document, canWrite: role !== "VIEWER" };
+  // userId came from a verified JWT and already resolved to an owner/access
+  // grant above, so the referenced user row is guaranteed to exist.
+  const user = (await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, email: true },
+  }))!;
+  return { document, canWrite: role !== "VIEWER", user };
 }
 
 /**

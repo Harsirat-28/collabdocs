@@ -17,14 +17,24 @@ export const YJS_FIELD = "default";
 /** How often a room's accumulated edits are flushed to Postgres while active. */
 const FLUSH_INTERVAL_MS = 3000;
 
+/** Minimal per-user info shown in the M4 active-users roster. */
+export interface PresenceUser {
+  userId: string;
+  name: string | null;
+  email: string;
+}
+
 export interface ClientToServerEvents {
   "document:join": (payload: unknown) => void;
   "document:update": (payload: unknown) => void;
+  "document:awareness": (payload: unknown) => void;
 }
 
 export interface ServerToClientEvents {
   "document:sync": (payload: { state: Uint8Array }) => void;
   "document:update": (payload: { update: Uint8Array }) => void;
+  "document:awareness": (payload: { update: Uint8Array }) => void;
+  "document:presence": (payload: { users: PresenceUser[] }) => void;
   "document:error": (payload: { message: string }) => void;
 }
 
@@ -40,6 +50,13 @@ interface Room {
   doc: Y.Doc;
   sockets: Set<CollabSocket>;
   writers: Set<string>;
+  // socket.id -> presence info, for the active-users roster (M4).
+  members: Map<string, PresenceUser>;
+  // socket.id -> last raw awareness update seen from that socket (M4).
+  // Replayed to a newly-joining socket so it immediately sees cursors that
+  // were set before it joined, rather than waiting for those users to next
+  // move their cursor/selection.
+  awarenessUpdates: Map<string, Uint8Array>;
   dirty: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   lastEditedBy: string | null;
@@ -52,6 +69,19 @@ const updateSchema = z.object({
   documentId: z.string().uuid(),
   update: z.instanceof(Uint8Array),
 });
+const awarenessSchema = z.object({
+  documentId: z.string().uuid(),
+  update: z.instanceof(Uint8Array),
+});
+
+/** The room's current members, deduplicated by user (one user may hold multiple sockets/tabs). */
+function roomRoster(room: Room): PresenceUser[] {
+  const byUser = new Map<string, PresenceUser>();
+  for (const member of room.members.values()) {
+    byUser.set(member.userId, member);
+  }
+  return [...byUser.values()];
+}
 
 function roomName(documentId: string): string {
   return `doc:${documentId}`;
@@ -74,6 +104,8 @@ function getOrCreateRoom(documentId: string, seed: { content: unknown; yjsState:
     doc: createSeededDoc(seed),
     sockets: new Set(),
     writers: new Set(),
+    members: new Map(),
+    awarenessUpdates: new Map(),
     dirty: false,
     timer: null,
     lastEditedBy: null,
@@ -130,7 +162,7 @@ async function cleanupRoomIfEmpty(documentId: string, room: Room): Promise<void>
   }
 }
 
-function leaveCurrentRoom(socket: CollabSocket): void {
+function leaveCurrentRoom(io: CollabServer, socket: CollabSocket): void {
   const documentId = socket.data.documentId;
   if (!documentId) return;
   const room = rooms.get(documentId);
@@ -138,8 +170,12 @@ function leaveCurrentRoom(socket: CollabSocket): void {
 
   room.sockets.delete(socket);
   room.writers.delete(socket.id);
+  room.members.delete(socket.id);
+  room.awarenessUpdates.delete(socket.id);
   if (room.sockets.size === 0) {
     void cleanupRoomIfEmpty(documentId, room);
+  } else {
+    io.to(roomName(documentId)).emit("document:presence", { users: roomRoster(room) });
   }
 }
 
@@ -150,10 +186,12 @@ export async function __flushRoomForTesting(documentId: string): Promise<void> {
 }
 
 /**
- * Wires up the M3 real-time collaboration namespace: JWT-authenticated
- * socket handshake (mirroring `requireAuth`), one room per document, and a
- * minimal Yjs update relay + periodic persistence. Presence/cursors are
- * explicitly out of scope (M4).
+ * Wires up the real-time collaboration namespace: JWT-authenticated socket
+ * handshake (mirroring `requireAuth`), one room per document, a Yjs update
+ * relay + periodic persistence (M3), and an ephemeral presence/cursor
+ * layer (M4) - an active-users roster per room, plus a raw Yjs Awareness
+ * update relay so Tiptap's CollaborationCursor can render remote
+ * cursors/selections. Awareness state is never persisted.
  */
 export function registerCollaboration(io: CollabServer): void {
   io.use((socket, next) => {
@@ -183,14 +221,16 @@ export function registerCollaboration(io: CollabServer): void {
       void (async () => {
         // A socket only ever holds one live document at a time in this
         // minimal implementation (one editor page per connection).
-        leaveCurrentRoom(socket);
+        leaveCurrentRoom(io, socket);
 
         let canWrite: boolean;
         let seed: { content: unknown; yjsState: Buffer | null };
+        let presenceUser: PresenceUser;
         try {
           const result = await documentService.getDocumentForRealtime(documentId, socket.data.userId);
           canWrite = result.canWrite;
           seed = { content: result.document.content, yjsState: result.document.yjsState as Buffer | null };
+          presenceUser = { userId: result.user.id, name: result.user.name, email: result.user.email };
         } catch {
           socket.emit("document:error", { message: "You do not have access to this document" });
           return;
@@ -198,12 +238,33 @@ export function registerCollaboration(io: CollabServer): void {
 
         const room = getOrCreateRoom(documentId, seed);
         room.sockets.add(socket);
+        room.members.set(socket.id, presenceUser);
         if (canWrite) room.writers.add(socket.id);
         socket.data.documentId = documentId;
         await socket.join(roomName(documentId));
 
         socket.emit("document:sync", { state: Y.encodeStateAsUpdate(room.doc) });
+        // Catch this joiner up on cursors/selections that were already
+        // active in the room before it joined.
+        for (const update of room.awarenessUpdates.values()) {
+          socket.emit("document:awareness", { update });
+        }
+        io.to(roomName(documentId)).emit("document:presence", { users: roomRoster(room) });
       })();
+    });
+
+    socket.on("document:awareness", (payload) => {
+      const parsed = awarenessSchema.safeParse(payload);
+      if (!parsed.success) return;
+      const { documentId, update } = parsed.data;
+
+      const room = rooms.get(documentId);
+      if (!room || socket.data.documentId !== documentId || !room.sockets.has(socket)) return;
+
+      // No write-permission check: viewers may not edit, but their cursor
+      // is still valid presence info to share with the room.
+      room.awarenessUpdates.set(socket.id, update);
+      socket.to(roomName(documentId)).emit("document:awareness", { update });
     });
 
     socket.on("document:update", (payload) => {
@@ -237,7 +298,7 @@ export function registerCollaboration(io: CollabServer): void {
     });
 
     socket.on("disconnect", () => {
-      leaveCurrentRoom(socket);
+      leaveCurrentRoom(io, socket);
     });
   });
 }

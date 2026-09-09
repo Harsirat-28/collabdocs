@@ -43,7 +43,10 @@ export function SignupPage() {
         <h1 className="mb-6 text-xl font-semibold text-gray-900">Create your account</h1>
 
         {error && (
-          <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div
+            role="alert"
+            className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+          >
             {error}
           </div>
         )}
@@ -54,7 +57,7 @@ export function SignupPage() {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+            className="w-full rounded border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           />
         </label>
 
@@ -65,7 +68,7 @@ export function SignupPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+            className="w-full rounded border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           />
         </label>
 
@@ -77,7 +80,7 @@ export function SignupPage() {
             minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+            className="w-full rounded border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           />
           <span className="mt-1 block text-xs text-gray-400">At least 8 characters</span>
         </label>
