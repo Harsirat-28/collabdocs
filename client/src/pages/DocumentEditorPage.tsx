@@ -1,14 +1,15 @@
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useEditor, EditorContent, type JSONContent } from "@tiptap/react";
+import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
+import Collaboration from "@tiptap/extension-collaboration";
 import { useDocument, useRenameDocument } from "../features/documents/hooks";
-import type { DocumentDetail, ConflictInfo } from "../features/documents/api";
-import { useAutosave } from "../features/documents/useAutosave";
+import type { DocumentDetail } from "../features/documents/api";
+import { useCollaborationDoc, YJS_FIELD } from "../features/realtime/useCollaborationDoc";
 import { uploadImage } from "../features/uploads/api";
 import { EditorToolbar } from "../features/editor/EditorToolbar";
 import { SaveStatusIndicator } from "../components/SaveStatusIndicator";
@@ -22,35 +23,23 @@ function EditorView({ document }: { document: DocumentDetail }) {
   const isOwner = document.role === "OWNER";
 
   const [title, setTitle] = useState(document.title);
-  const [conflict, setConflict] = useState<ConflictInfo | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleConflict = useCallback((info: ConflictInfo) => {
-    setConflict(info);
-  }, []);
-
-  const { status, scheduleSave, retry, acceptServerVersion } = useAutosave({
-    documentId: document.id,
-    initialVersion: document.version,
-    onConflict: handleConflict,
-  });
+  const { ydoc, status } = useCollaborationDoc(document.id);
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({ history: false }),
       Underline,
       Link.configure({ openOnClick: false, autolink: true }),
       Image,
       Placeholder.configure({ placeholder: "Start writing..." }),
+      Collaboration.configure({ document: ydoc, field: YJS_FIELD }),
     ],
-    content: document.content,
     editable: canEdit,
-    onUpdate: ({ editor }) => {
-      scheduleSave(editor.getJSON());
-    },
   });
 
   function commitTitle() {
@@ -60,14 +49,6 @@ function EditorView({ document }: { document: DocumentDetail }) {
     } else {
       setTitle(document.title);
     }
-  }
-
-  function resolveConflict() {
-    if (!conflict || !editor) return;
-    editor.commands.setContent(conflict.currentContent as JSONContent);
-    setTitle(conflict.currentTitle);
-    acceptServerVersion(conflict.currentVersion);
-    setConflict(null);
   }
 
   async function handleFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
@@ -110,7 +91,7 @@ function EditorView({ document }: { document: DocumentDetail }) {
             />
           </div>
           <div className="flex flex-shrink-0 items-center gap-4">
-            <SaveStatusIndicator status={status} onRetry={retry} />
+            <SaveStatusIndicator status={status} />
             {isOwner && (
               <button
                 onClick={() => setSharePanelOpen((open) => !open)}
@@ -124,16 +105,6 @@ function EditorView({ document }: { document: DocumentDetail }) {
       </header>
 
       {isOwner && sharePanelOpen && <SharePanel documentId={document.id} />}
-
-      {conflict && (
-        <div className="border-b border-amber-200 bg-amber-50 px-6 py-2 text-center text-sm text-amber-800">
-          This document was updated elsewhere.{" "}
-          <button onClick={resolveConflict} className="font-medium underline">
-            Reload latest version
-          </button>{" "}
-          (your unsaved changes since then will be lost)
-        </div>
-      )}
 
       {imageError && (
         <div className="border-b border-red-200 bg-red-50 px-6 py-2 text-center text-sm text-red-700">

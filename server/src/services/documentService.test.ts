@@ -199,6 +199,79 @@ describe("optimistic concurrency on content updates", () => {
   });
 });
 
+describe("M3: realtime collaboration support", () => {
+  describe("getDocumentForRealtime", () => {
+    it("resolves canWrite=true for the owner, and returns the document row", async () => {
+      const doc = await documentService.createDocument(OWNER, "Doc");
+
+      const result = await documentService.getDocumentForRealtime(doc.id, OWNER);
+
+      expect(result.canWrite).toBe(true);
+      expect(result.document.id).toBe(doc.id);
+    });
+
+    it("resolves canWrite=false for a VIEWER grant", async () => {
+      const owner = await createFakeUser("realtime-owner1@example.com");
+      const viewer = await createFakeUser("realtime-viewer1@example.com");
+      const doc = await documentService.createDocument(owner.id, "Doc");
+      await documentService.shareDocument(doc.id, owner.id, viewer.email, "VIEWER");
+
+      const result = await documentService.getDocumentForRealtime(doc.id, viewer.id);
+
+      expect(result.canWrite).toBe(false);
+    });
+
+    it("resolves canWrite=true for an EDITOR grant", async () => {
+      const owner = await createFakeUser("realtime-owner2@example.com");
+      const editor = await createFakeUser("realtime-editor2@example.com");
+      const doc = await documentService.createDocument(owner.id, "Doc");
+      await documentService.shareDocument(doc.id, owner.id, editor.email, "EDITOR");
+
+      const result = await documentService.getDocumentForRealtime(doc.id, editor.id);
+
+      expect(result.canWrite).toBe(true);
+    });
+
+    it("throws NotFoundError for a user with no access at all", async () => {
+      const owner = await createFakeUser("realtime-owner3@example.com");
+      const doc = await documentService.createDocument(owner.id, "Doc");
+
+      await expect(
+        documentService.getDocumentForRealtime(doc.id, "no-access-user"),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
+  });
+
+  describe("saveYjsSnapshot", () => {
+    it("persists yjsState and, when content is provided, bumps version and records the editor", async () => {
+      const doc = await documentService.createDocument(OWNER, "Doc");
+      const state = Buffer.from([1, 2, 3, 4]);
+      const content = { type: "doc", content: [{ type: "paragraph" }] };
+
+      await documentService.saveYjsSnapshot(doc.id, OWNER, { yjsState: state, content });
+
+      const stored = await documentService.getDocument(doc.id, OWNER);
+      expect(stored.yjsState).toEqual(state);
+      expect(stored.content).toEqual(content);
+      expect(stored.version).toBe(doc.version + 1);
+      expect(stored.lastEditedBy).toBe(OWNER);
+    });
+
+    it("persists yjsState without touching content/version when content is null", async () => {
+      const doc = await documentService.createDocument(OWNER, "Doc");
+      const originalContent = doc.content;
+      const state = Buffer.from([5, 6, 7]);
+
+      await documentService.saveYjsSnapshot(doc.id, OWNER, { yjsState: state, content: null });
+
+      const stored = await documentService.getDocument(doc.id, OWNER);
+      expect(stored.yjsState).toEqual(state);
+      expect(stored.content).toEqual(originalContent);
+      expect(stored.version).toBe(doc.version);
+    });
+  });
+});
+
 describe("M2: sharing and role-based access", () => {
   describe("shareDocument", () => {
     it("grants a role to an existing user by email", async () => {

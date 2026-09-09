@@ -27,6 +27,13 @@ model Document {
   content      Json     @default("{}")
   // Incremented on every successful content update; used to reject stale autosave writes.
   version      Int      @default(1)
+  // Compacted Yjs state (Y.encodeStateAsUpdate) for real-time collaborative
+  // editing, once this document has been opened collaboratively at least
+  // once. Null means "never opened collaboratively" - on first collaborative
+  // open, a Y.Doc is seeded from `content` instead. Once populated, `content`
+  // is a derived snapshot kept in sync from this, not an independent source
+  // of truth.
+  yjsState     Bytes?
   ownerId      String
   owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   lastEditedBy String?

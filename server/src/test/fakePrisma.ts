@@ -42,6 +42,7 @@ interface FakeDocument {
   title: string;
   content: unknown;
   version: number;
+  yjsState: Buffer | null;
   ownerId: string;
   lastEditedBy: string | null;
   createdAt: Date;
@@ -203,6 +204,7 @@ export function createFakePrisma() {
           title: data.title,
           content: data.content,
           version: 1,
+          yjsState: null,
           ownerId: data.ownerId,
           lastEditedBy: data.lastEditedBy,
           createdAt: now,
@@ -221,6 +223,7 @@ export function createFakePrisma() {
           content?: unknown;
           lastEditedBy?: string;
           version?: number | { increment: number };
+          yjsState?: Buffer | null;
         };
       }) {
         const doc = documents.get(where.id);
@@ -228,6 +231,7 @@ export function createFakePrisma() {
         if (data.title !== undefined) doc.title = data.title;
         if (data.content !== undefined) doc.content = data.content;
         if (data.lastEditedBy !== undefined) doc.lastEditedBy = data.lastEditedBy;
+        if (data.yjsState !== undefined) doc.yjsState = data.yjsState;
         if (data.version !== undefined) {
           doc.version =
             typeof data.version === "object"

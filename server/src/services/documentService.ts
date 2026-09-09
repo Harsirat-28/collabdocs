@@ -155,6 +155,47 @@ export async function updateDocumentContent(
 }
 
 /**
+ * Authorization + seed data for a Socket.io room join (M3). Reuses the same
+ * read-access check as the REST GET, and derives write permission from the
+ * resolved role - same OWNER/EDITOR-can-write, VIEWER-cannot rule as the
+ * REST content endpoint, just checked once at join time rather than per
+ * request.
+ */
+export async function getDocumentForRealtime(documentId: string, userId: string) {
+  const { document, role } = await loadDocumentForRead(documentId, userId);
+  return { document, canWrite: role !== "VIEWER" };
+}
+
+/**
+ * Persists a periodic snapshot of a document's live Yjs state (M3). Always
+ * updates `yjsState`; `content` is included only when the caller could
+ * derive valid ProseMirror JSON from the Yjs doc, so a transient bad decode
+ * never clobbers the last-known-good REST-readable snapshot. Bumps
+ * `version` alongside `content`, same as any other content write, so the
+ * REST optimistic-concurrency check stays meaningful if the document is
+ * later opened outside a live collaboration session.
+ */
+export async function saveYjsSnapshot(
+  documentId: string,
+  editorUserId: string | null,
+  { yjsState, content }: { yjsState: Buffer; content: Record<string, unknown> | null },
+): Promise<void> {
+  await prisma.document.update({
+    where: { id: documentId },
+    data: {
+      yjsState,
+      ...(content
+        ? {
+            content: content as Prisma.InputJsonValue,
+            version: { increment: 1 },
+            ...(editorUserId ? { lastEditedBy: editorUserId } : {}),
+          }
+        : {}),
+    },
+  });
+}
+
+/**
  * Grants (or changes) a VIEWER/EDITOR role for another existing user, by
  * email. Owner-only. Upserts, so re-sharing with someone just changes their
  * role rather than erroring.

@@ -13,7 +13,7 @@ import { BadRequestError } from "./errors.js";
  * adds a display-time ProseMirror plugin and contributes no nodes/marks,
  * so it can't affect what `getSchema` builds.
  */
-const documentSchema = getSchema([
+export const documentSchema = getSchema([
   StarterKit,
   Underline,
   Link.configure({ openOnClick: false, autolink: true }),
